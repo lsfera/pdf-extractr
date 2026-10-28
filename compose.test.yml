@@ -1,0 +1,25 @@
+# docker compose -f compose.test.yml up --build --abort-on-container-exit --exit-code-from tests
+# LocalStack needs the host docker socket to start Lambda containers, and they join this network to reach it.
+name: pdf-extractor-test
+services:
+  pdf-localstack:
+    image: localstack/localstack:4.14.0
+    environment:
+      SERVICES: s3,sqs,lambda,iam,logs,cloudwatch,sts,xray
+      LAMBDA_DOCKER_NETWORK: pdf-test-net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:4566/_localstack/health"]
+      interval: 3s
+      retries: 40
+  tests:
+    build:
+      context: ..
+      dockerfile: pdf-extractor/Dockerfile.test
+    depends_on:
+      pdf-localstack:
+        condition: service_healthy
+networks:
+  default:
+    name: pdf-test-net

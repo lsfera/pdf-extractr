@@ -1,0 +1,57 @@
+# Test runner for the PDF extraction pipeline: lambda unit/integration tests, then the LocalStack end-to-end test.
+# Build with the directory that holds pdf-extractor/, pdf_oxide/ and pulumi-rust/ side by side as the context
+# (compose.test.yml does this; LocalStack itself runs as a separate compose service).
+
+ARG PULUMI_VERSION=3.272.0
+ARG PULUMI_AWS_VERSION=7.41.0
+
+# Static arm64 `bootstrap` for the Lambda (provided.al2023, arm64).
+FROM clux/muslrust:stable AS lambda
+WORKDIR /volume
+COPY pdf_oxide ./pdf_oxide
+COPY pdf-extractor/lambda ./pdf-extractor/lambda
+WORKDIR /volume/pdf-extractor/lambda
+RUN rustup target add aarch64-unknown-linux-musl && \
+    cargo build --release --features lambda --bin lambda --target aarch64-unknown-linux-musl
+
+# Pulumi's Rust language plugin (no released binaries exist; built from the pinned checkout).
+FROM golang:1.25-bookworm AS plugin
+COPY pulumi-rust/pulumi-language-rust /src/pulumi-language-rust
+WORKDIR /src/pulumi-language-rust
+RUN go build -o /pulumi-language-rust .
+
+FROM rust:1-bookworm AS test
+ARG PULUMI_VERSION
+ARG PULUMI_AWS_VERSION
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends awscli jq curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pulumi CLI, checked against the published checksums.
+RUN set -eux; \
+    tarball="pulumi-v${PULUMI_VERSION}-linux-${TARGETARCH}.tar.gz"; \
+    base="https://github.com/pulumi/pulumi/releases/download/v${PULUMI_VERSION}"; \
+    cd /tmp; curl -fsSLO "$base/$tarball"; \
+    curl -fsSL "$base/pulumi-${PULUMI_VERSION}-checksums.txt" | grep " $tarball\$" | sha256sum -c -; \
+    mkdir -p /opt/pulumi; tar -xzf "$tarball" -C /opt/pulumi --strip-components=1; rm "$tarball"
+COPY --from=plugin /pulumi-language-rust /opt/pulumi/pulumi-language-rust
+ENV PATH=/opt/pulumi:$PATH
+
+WORKDIR /work
+COPY pdf_oxide ./pdf_oxide
+COPY pulumi-rust ./pulumi-rust
+COPY pdf-extractor ./pdf-extractor
+
+# Generated AWS SDK, repointed at the local pulumi crate (see infra/README.md).
+WORKDIR /work/pdf-extractor/infra
+RUN PULUMI_CONFIG_PASSPHRASE="" pulumi login --local && \
+    pulumi package gen-sdk "aws@${PULUMI_AWS_VERSION}" --language rust --out ./sdks/aws && \
+    sed -i 's#^pulumi = .*#pulumi = { path = "../../../../../pulumi-rust/sdk/rust/pulumi" }#' sdks/aws/rust/Cargo.toml
+# Warm the build caches so a test run does not recompile the AWS SDK crate (needs several GB of RAM).
+RUN cargo build
+RUN mkdir -p lambda-package
+COPY --from=lambda /volume/pdf-extractor/lambda/target/aarch64-unknown-linux-musl/release/lambda lambda-package/bootstrap
+RUN cargo test --manifest-path ../lambda/Cargo.toml --no-run
+
+ENV LS_URL=http://pdf-localstack:4566 LS_INTERNAL_URL=http://pdf-localstack:4566
+CMD cargo test --manifest-path ../lambda/Cargo.toml && make e2e

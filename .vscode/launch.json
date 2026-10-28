@@ -1,0 +1,52 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug PDF extract lambda (LocalStack)",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin",
+                    "lambda",
+                    "--features",
+                    "lambda",
+                    "--manifest-path",
+                    "${workspaceFolder}/lambda/Cargo.toml"
+                ]
+            },
+            "env": {
+                // `make up` publishes LocalStack on the Docker host; from the devcontainer it is
+                // reached through host.docker.internal (use http://localhost:4566 when VS Code runs on the host).
+                "AWS_ENDPOINT_URL": "http://host.docker.internal:4566",
+                "AWS_ACCESS_KEY_ID": "test",
+                "AWS_SECRET_ACCESS_KEY": "test",
+                "AWS_REGION": "us-east-1",
+                "S3_FORCE_PATH_STYLE": "1",
+                "OUTPUT_BUCKET": "${input:outputBucket}",
+                "LOCAL_S3_BUCKET": "${input:rawBucket}",
+                "LOCAL_S3_KEY": "${input:key}",
+                "RUST_LOG": "debug"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "rawBucket",
+            "type": "promptString",
+            "description": "Raw bucket (printed by `make up`)"
+        },
+        {
+            "id": "outputBucket",
+            "type": "promptString",
+            "description": "Output bucket (printed by `make up`)"
+        },
+        {
+            "id": "key",
+            "type": "promptString",
+            "description": "Object key already uploaded to the raw bucket",
+            "default": "raw/my.pdf"
+        }
+    ]
+}

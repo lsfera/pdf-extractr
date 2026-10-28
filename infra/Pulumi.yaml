@@ -1,0 +1,5 @@
+name: pdf-extract-infra
+runtime: rust
+description: PDF extraction pipeline on AWS (S3, SQS, Lambda)
+template:
+  description: A minimal Rust Pulumi program

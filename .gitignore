@@ -1,0 +1,5 @@
+**/target/
+/infra/sdks/
+/infra/lambda-package/
+/infra/.pulumi-state/
+/infra/Pulumi.*.yaml

@@ -1,0 +1,37 @@
+[package]
+name = "pdf-extract-lambda"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pdf_oxide = { path = "../../pdf_oxide", default-features = false, features = ["icc", "legacy-crypto"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+# Only pulled in for the Lambda binary: `cargo lambda build --features lambda`
+tokio = { version = "1", features = ["macros"], optional = true }
+lambda_runtime = { version = "1", optional = true }
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"], optional = true }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"], optional = true }
+aws_lambda_events = { version = "1", default-features = false, features = ["s3", "sqs"], optional = true }
+
+[features]
+lambda = ["dep:tokio", "dep:lambda_runtime", "dep:aws-config", "dep:aws-sdk-s3", "dep:aws_lambda_events"]
+
+[[bin]]
+name = "extract"
+path = "src/bin/extract.rs"
+
+[[bin]]
+name = "lambda"
+path = "src/bin/lambda.rs"
+required-features = ["lambda"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "unwind" # per-page catch_unwind needs unwind; abort would kill the whole invocation

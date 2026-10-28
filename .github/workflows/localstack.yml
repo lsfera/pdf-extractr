@@ -1,0 +1,106 @@
+name: localstack
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: localstack-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PULUMI_VERSION: 3.272.0
+  PULUMI_AWS_VERSION: 7.41.0
+  LOCALSTACK_IMAGE: localstack/localstack:4.14.0
+  # This repository is checked out into pdf-extractor/; the unpublished dependencies go beside it, at the
+  # paths its Cargo.toml files expect (../../pdf_oxide, ../../pulumi-rust from lambda/ and infra/).
+  PDF_OXIDE_REF: ad49c4cb3638dc950a29350ef882161372fde473
+  PULUMI_RUST_REF: d62e9f213321befce6f870971e191c9f3946b967
+
+jobs:
+  localstack:
+    # arm64 so the Lambda (provided.al2023, arm64) runs natively inside LocalStack instead of under emulation.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: pdf-extractor
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: lsfera/pdf_oxide
+          ref: ${{ env.PDF_OXIDE_REF }}
+          path: pdf_oxide
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: pulumi-labs/pulumi-rust
+          ref: ${{ env.PULUMI_RUST_REF }}
+          path: pulumi-rust
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: pulumi-rust/pulumi-language-rust/go.mod
+          cache: false
+      - name: build the pulumi rust language plugin
+        working-directory: pulumi-rust/pulumi-language-rust
+        run: |
+          go build .
+          echo "$PWD" >> "$GITHUB_PATH"
+      - name: install pulumi
+        run: |
+          base="https://github.com/pulumi/pulumi/releases/download/v${PULUMI_VERSION}"
+          tarball="pulumi-v${PULUMI_VERSION}-linux-arm64.tar.gz"
+          curl -fsSLO "$base/$tarball"
+          curl -fsSL "$base/pulumi-${PULUMI_VERSION}-checksums.txt" | grep " $tarball\$" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/pulumi"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/pulumi" --strip-components=1
+          echo "$RUNNER_TEMP/pulumi" >> "$GITHUB_PATH"
+
+      - name: build the lambda package
+        run: |
+          docker build -f pdf-extractor/lambda/Dockerfile --target out --output "type=local,dest=$RUNNER_TEMP/lambda-out" .
+          mkdir -p pdf-extractor/infra/lambda-package
+          cp "$RUNNER_TEMP/lambda-out/bootstrap" pdf-extractor/infra/lambda-package/bootstrap
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pdf-extractor/infra
+      - name: generate the aws sdk
+        working-directory: pdf-extractor/infra
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PULUMI_CONFIG_PASSPHRASE: ""
+        run: |
+          pulumi login --local
+          pulumi package gen-sdk "aws@${PULUMI_AWS_VERSION}" --language rust --out ./sdks/aws
+          sed -i 's#^pulumi = .*#pulumi = { path = "../../../../../pulumi-rust/sdk/rust/pulumi" }#' sdks/aws/rust/Cargo.toml
+
+      - name: start localstack
+        run: |
+          docker network create pdf-net
+          docker run -d --name pdf-localstack --network pdf-net -p 4566:4566 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e SERVICES=s3,sqs,lambda,iam,logs,cloudwatch,sts,xray \
+            -e LAMBDA_DOCKER_NETWORK=pdf-net \
+            "$LOCALSTACK_IMAGE"
+          for _ in $(seq 60); do
+            curl -fs http://localhost:4566/_localstack/health >/dev/null && exit 0
+            sleep 2
+          done
+          echo "localstack did not become healthy" >&2
+          exit 1
+
+      - name: end-to-end test
+        working-directory: pdf-extractor/infra
+        run: tests/localstack.sh
+
+      - name: localstack logs
+        if: failure()
+        run: docker logs pdf-localstack 2>&1 | tail -n 200

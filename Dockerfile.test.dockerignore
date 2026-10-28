@@ -1,0 +1,10 @@
+*
+!pdf_oxide
+!pulumi-rust
+!pdf-extractor
+**/.git
+**/target
+pdf-extractor/infra/sdks
+pdf-extractor/infra/lambda-package
+pdf-extractor/infra/.pulumi-state
+pulumi-rust/pulumi-language-rust/pulumi-language-rust

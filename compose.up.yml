@@ -1,0 +1,14 @@
+# Override used by `make up`: publishes LocalStack and adds the long-running `dev` service.
+services:
+  pdf-localstack:
+    ports:
+      - "4566:4566"
+  dev:
+    build:
+      context: ..
+      dockerfile: pdf-extractor/Dockerfile.test
+    command: make dev
+    stop_grace_period: 10s
+    depends_on:
+      pdf-localstack:
+        condition: service_healthy
