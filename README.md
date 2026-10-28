@@ -50,6 +50,7 @@ Settings the stack applies:
 |---|---|
 | S3 → SQS | Notification for `ObjectCreated` on prefix `raw/`, suffix `.pdf`, plus a queue policy that lets the bucket send messages. |
 | Output bucket | Separate from the input, so writing results can never re-trigger the pipeline. |
+| Data protection | Both buckets: SSE-S3 encryption, all public access blocked, TLS-only policy, incomplete multipart uploads aborted after 7 days. The raw bucket is versioned (old versions expire after 30 days). Queues use SQS-managed encryption. Optional `rawRetentionDays` / `outputRetentionDays` expire objects. |
 | Queue | Visibility timeout of 6× the Lambda timeout. Redrive to the DLQ after 3 receives. |
 | Event source mapping | Batch size 1, so memory use follows one PDF. A `MaximumConcurrency` cap keeps a bulk upload from flooding downstream systems. |
 | Lambda | arm64, `provided.al2023`, X-Ray active tracing. Memory is sized from the `Max Memory Used` line in the REPORT log. |

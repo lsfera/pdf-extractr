@@ -55,6 +55,131 @@ fn allow(actions: &[&str], resources: Vec<Pv>) -> Pv {
     ])
 }
 
+/// Encryption at rest, no public access, TLS only, and lifecycle rules for a bucket that holds financial documents.
+/// `versioned` keeps overwritten and deleted objects recoverable (old versions expire after 30 days);
+/// `retention_days` (optional) expires current objects after that many days.
+fn harden_bucket(ctx: &pulumi::Context, id: &str, bucket: &s3::Bucket, versioned: bool, retention_days: Option<Pv>) {
+    let none = pulumi::ResourceOptions::default;
+
+    s3::BucketServerSideEncryptionConfiguration::new(
+        ctx,
+        &format!("{id}-sse"),
+        s3::BucketServerSideEncryptionConfigurationArgs {
+            bucket: Some(bucket.bucket()),
+            rules: Some(vec![types::S3BucketServerSideEncryptionConfigurationRuleArgs {
+                apply_server_side_encryption_by_default: Some(
+                    types::S3BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs {
+                        sse_algorithm: Some(s("AES256").cast()),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        },
+        none(),
+    );
+
+    // The policy is created after the public access block: S3 rejects concurrent changes to the two.
+    let access_block = s3::BucketPublicAccessBlock::new(
+        ctx,
+        &format!("{id}-public-access"),
+        s3::BucketPublicAccessBlockArgs {
+            bucket: Some(bucket.bucket()),
+            block_public_acls: Some(pv::bool(true).cast()),
+            block_public_policy: Some(pv::bool(true).cast()),
+            ignore_public_acls: Some(pv::bool(true).cast()),
+            restrict_public_buckets: Some(pv::bool(true).cast()),
+            ..Default::default()
+        },
+        none(),
+    );
+    s3::BucketPolicy::new(
+        ctx,
+        &format!("{id}-tls-only"),
+        s3::BucketPolicyArgs {
+            bucket: Some(bucket.bucket()),
+            policy: Some(
+                policy(vec![obj(vec![
+                    ("Sid", s("DenyInsecureTransport")),
+                    ("Effect", s("Deny")),
+                    ("Principal", s("*")),
+                    ("Action", s("s3:*")),
+                    ("Resource", pv::array(vec![bucket.arn().cast(), pv::concat(vec![bucket.arn().cast(), s("/*")])])),
+                    ("Condition", obj(vec![("Bool", obj(vec![("aws:SecureTransport", s("false"))]))])),
+                ])])
+                .cast(),
+            ),
+            ..Default::default()
+        },
+        pulumi::ResourceOptions {
+            depends_on: vec![access_block.pulumi_resource().clone()],
+            ..Default::default()
+        },
+    );
+
+    let versioning = versioned.then(|| {
+        s3::BucketVersioning::new(
+            ctx,
+            &format!("{id}-versioning"),
+            s3::BucketVersioningArgs {
+                bucket: Some(bucket.bucket()),
+                versioning_configuration: Some(types::S3BucketVersioningVersioningConfigurationArgs {
+                    status: Some(s("Enabled").cast()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            none(),
+        )
+    });
+
+    let rule = |rule_id: &str| types::S3BucketLifecycleConfigurationV2RuleArgs {
+        id: Some(s(rule_id).cast()),
+        status: Some(s("Enabled").cast()),
+        filter: Some(types::S3BucketLifecycleConfigurationV2RuleFilterArgs::default()),
+        ..Default::default()
+    };
+    let mut rules = vec![types::S3BucketLifecycleConfigurationV2RuleArgs {
+        abort_incomplete_multipart_upload: Some(types::S3BucketLifecycleConfigurationV2RuleAbortIncompleteMultipartUploadArgs {
+            days_after_initiation: Some(pv::number(7.0).cast()),
+        }),
+        ..rule("abort-incomplete-multipart")
+    }];
+    if versioned {
+        rules.push(types::S3BucketLifecycleConfigurationV2RuleArgs {
+            noncurrent_version_expiration: Some(types::S3BucketLifecycleConfigurationV2RuleNoncurrentVersionExpirationArgs {
+                noncurrent_days: Some(pv::number(30.0).cast()),
+                ..Default::default()
+            }),
+            ..rule("expire-noncurrent-versions")
+        });
+    }
+    if let Some(days) = retention_days {
+        rules.push(types::S3BucketLifecycleConfigurationV2RuleArgs {
+            expiration: Some(types::S3BucketLifecycleConfigurationV2RuleExpirationArgs {
+                days: Some(days.cast()),
+                ..Default::default()
+            }),
+            ..rule("expire-current")
+        });
+    }
+    s3::BucketLifecycleConfigurationV2::new(
+        ctx,
+        &format!("{id}-lifecycle"),
+        s3::BucketLifecycleConfigurationV2Args {
+            bucket: Some(bucket.bucket()),
+            rules: Some(rules),
+            ..Default::default()
+        },
+        pulumi::ResourceOptions {
+            // Lifecycle rules for noncurrent versions need versioning enabled first.
+            depends_on: versioning.iter().map(|v| v.pulumi_resource().clone()).collect(),
+            ..Default::default()
+        },
+    );
+}
+
 fn main() {
     pulumi::run(|ctx| async move {
         let force_destroy = ctx
@@ -88,12 +213,17 @@ fn main() {
             pulumi::ResourceOptions::default(),
         );
 
+        // `rawRetentionDays` / `outputRetentionDays` (optional) expire objects; unset keeps them indefinitely.
+        harden_bucket(&ctx, "raw", &raw, true, ctx.config().get_int_opt("rawRetentionDays"));
+        harden_bucket(&ctx, "extracted", &out, false, ctx.config().get_int_opt("outputRetentionDays"));
+
         // Queues: PDFs that fail MAX_RECEIVE_COUNT times land in the DLQ.
         let dlq = sqs::Queue::new(
             &ctx,
             "dlq",
             sqs::QueueArgs {
                 message_retention_seconds: Some(pv::number(1_209_600.0).cast()),
+                sqs_managed_sse_enabled: Some(pv::bool(true).cast()),
                 ..Default::default()
             },
             pulumi::ResourceOptions::default(),
@@ -103,6 +233,7 @@ fn main() {
             "queue",
             sqs::QueueArgs {
                 visibility_timeout_seconds: Some(pv::number(f64::from(VISIBILITY_TIMEOUT_SECS)).cast()),
+                sqs_managed_sse_enabled: Some(pv::bool(true).cast()),
                 redrive_policy: Some(
                     pv::to_json(obj(vec![
                         ("deadLetterTargetArn", dlq.arn().cast()),
