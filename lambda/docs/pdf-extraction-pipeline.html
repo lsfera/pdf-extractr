@@ -1,0 +1,187 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>PDF Extraction Pipeline</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Layout: one left-to-right hot path (S3 -> SQS -> Lambda -> S3), failure branch above, telemetry below, hand-off to the next stage dashed. */
+  :root {
+    --bg: #f6f7f9;
+    --fg: #1b2330;
+    --muted: #5a6577;
+    --node: #ffffff;
+    --node-line: #98a3b5;
+    --line: #3b4658;
+    --group: #eceff4;
+    --accent: #0b6bcb;
+    --accent-soft: #dcebfb;
+    --warn: #b4532a;
+    --warn-soft: #f9e6dc;
+    --rule: #d5dae3;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12171f; --fg: #e3e8f0; --muted: #98a3b5; --node: #1b2330; --node-line: #4a566b;
+      --line: #aeb9cb; --group: #181f2a; --accent: #5aa7f2; --accent-soft: #16304d;
+      --warn: #e58a5f; --warn-soft: #3a2418; --rule: #2b3544; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12171f; --fg: #e3e8f0; --muted: #98a3b5; --node: #1b2330; --node-line: #4a566b;
+    --line: #aeb9cb; --group: #181f2a; --accent: #5aa7f2; --accent-soft: #16304d;
+    --warn: #e58a5f; --warn-soft: #3a2418; --rule: #2b3544; color-scheme: dark;
+  }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.55;
+    padding-block: 32px 56px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+  h1 { font-size: 1.75rem; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+  h2 { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; }
+  p { margin: 0; max-width: 68ch; }
+  .lede { color: var(--muted); margin-top: 6px; }
+  .status { border: 1px solid var(--rule); background: var(--warn-soft); border-left: 4px solid var(--warn); padding: 10px 14px; border-radius: 4px; max-width: 78ch; font-size: 0.92rem; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--node); }
+  svg { display: block; min-width: 900px; width: 100%; height: auto; color: var(--line); }
+  figcaption { color: var(--muted); font-size: 0.9rem; max-width: 80ch; }
+  .grp { fill: var(--group); stroke: var(--rule); stroke-width: 1; }
+  .node { fill: var(--node); stroke: var(--node-line); stroke-width: 1.25; }
+  .node.hot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.75; }
+  .node.fail { fill: var(--warn-soft); stroke: var(--warn); }
+  .node.later { stroke-dasharray: 5 4; }
+  .t { font: 600 13px var(--sans); fill: var(--fg); }
+  .s { font: 400 11px var(--mono); fill: var(--muted); }
+  .lbl { font: 500 11px var(--mono); fill: var(--fg); }
+  .gl { font: 600 11px var(--sans); fill: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .ln { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .ln.dash { stroke-dasharray: 6 4; }
+  .ln.warn { stroke: var(--warn); }
+  .arrow { fill: var(--line); }
+  .arrow.warn { fill: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-top: 1px solid var(--rule); }
+  th { width: 26%; font-weight: 600; white-space: nowrap; }
+  td code, th code { font-family: var(--mono); font-size: 0.85em; }
+  .tbl { overflow-x: auto; }
+  @media (max-width: 560px) { th { white-space: normal; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<main>
+  <header>
+    <h1>PDF Extraction Pipeline</h1>
+    <p class="lede">PDFs land in S3, a queue absorbs bursts and retries, and one Rust Lambda per document writes structured JSON and Markdown to a separate bucket.</p>
+  </header>
+
+  <p class="status"><strong>Validated on LocalStack only.</strong> The Pulumi stack in <code>infra/</code> deploys this design and passes the end-to-end test. The dead-letter transition, X-Ray and a real AWS deployment are not yet exercised.</p>
+
+  <figure>
+    <div class="scroll">
+      <svg viewBox="0 0 1140 580" role="img" aria-label="PDFs uploaded to an S3 raw bucket raise ObjectCreated events into an SQS queue. A Rust Lambda polls the queue one message at a time, reads the whole PDF back from S3, writes JSON and Markdown to a separate output bucket, and emits logs, metrics and traces to CloudWatch and X-Ray. Messages failing three times go to a dead-letter queue. The output bucket notifies the next pipeline stage.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrow"/></marker>
+          <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrow warn"/></marker>
+        </defs>
+
+        <!-- hot path -->
+        <rect class="node" x="20" y="160" width="90" height="80" rx="6"/>
+        <text class="t" x="65" y="196" text-anchor="middle">Uploaders</text>
+        <text class="s" x="65" y="214" text-anchor="middle">upstream</text>
+
+        <rect class="node" x="190" y="160" width="140" height="80" rx="6"/>
+        <text class="t" x="260" y="193" text-anchor="middle">S3 raw bucket</text>
+        <text class="s" x="260" y="212" text-anchor="middle">raw/*.pdf</text>
+
+        <rect class="node" x="430" y="160" width="140" height="80" rx="6"/>
+        <text class="t" x="500" y="193" text-anchor="middle">SQS queue</text>
+        <text class="s" x="500" y="212" text-anchor="middle">standard</text>
+
+        <rect class="node hot" x="670" y="160" width="200" height="80" rx="6"/>
+        <text class="t" x="770" y="190" text-anchor="middle">Lambda: extract</text>
+        <text class="s" x="770" y="208" text-anchor="middle">Rust · arm64</text>
+        <text class="s" x="770" y="223" text-anchor="middle">provided.al2023</text>
+
+        <rect class="node" x="960" y="160" width="140" height="80" rx="6"/>
+        <text class="t" x="1030" y="193" text-anchor="middle">S3 output bucket</text>
+        <text class="s" x="1030" y="212" text-anchor="middle">.json + .md</text>
+
+        <line class="ln" x1="110" y1="200" x2="188" y2="200" marker-end="url(#ah)"/>
+        <text class="lbl" x="149" y="190" text-anchor="middle">PUT</text>
+
+        <line class="ln" x1="330" y1="200" x2="428" y2="200" marker-end="url(#ah)"/>
+        <text class="lbl" x="379" y="190" text-anchor="middle">ObjectCreated</text>
+
+        <line class="ln" x1="570" y1="200" x2="668" y2="200" marker-end="url(#ah)"/>
+        <text class="lbl" x="619" y="190" text-anchor="middle">poll · batch 1</text>
+
+        <line class="ln" x1="870" y1="200" x2="958" y2="200" marker-end="url(#ah)"/>
+        <text class="lbl" x="914" y="180" text-anchor="middle">PutObject</text>
+        <text class="s" x="914" y="193" text-anchor="middle">×2</text>
+
+        <!-- Lambda pulls the PDF by key -->
+        <path class="ln dash" d="M260 240 V285 H720 V242" marker-end="url(#ah)"/>
+        <text class="lbl" x="490" y="277" text-anchor="middle">GetObject by key · whole PDF into memory</text>
+
+        <!-- failure branch -->
+        <rect class="node fail" x="430" y="40" width="140" height="70" rx="6"/>
+        <text class="t" x="500" y="70" text-anchor="middle">Dead-letter queue</text>
+        <text class="s" x="500" y="89" text-anchor="middle">poison PDFs</text>
+        <line class="ln warn" x1="500" y1="158" x2="500" y2="112" marker-end="url(#ahw)"/>
+        <text class="lbl" x="510" y="140">after 3 receives</text>
+
+        <!-- hand-off -->
+        <rect class="node later" x="960" y="330" width="140" height="74" rx="6"/>
+        <text class="t" x="1030" y="360" text-anchor="middle">Next stage</text>
+        <text class="s" x="1030" y="379" text-anchor="middle">EventBridge / SNS / SQS</text>
+        <line class="ln dash" x1="1030" y1="242" x2="1030" y2="328" marker-end="url(#ah)"/>
+        <text class="lbl" x="1022" y="292" text-anchor="end">ObjectCreated on .json</text>
+
+        <!-- observability -->
+        <rect class="grp" x="430" y="440" width="685" height="110" rx="6"/>
+        <text class="gl" x="446" y="462">Observability</text>
+
+        <rect class="node" x="450" y="474" width="150" height="62" rx="6"/>
+        <text class="t" x="525" y="500" text-anchor="middle">CloudWatch Logs</text>
+        <text class="s" x="525" y="518" text-anchor="middle">JSON tracing</text>
+
+        <rect class="node" x="615" y="474" width="150" height="62" rx="6"/>
+        <text class="t" x="690" y="500" text-anchor="middle">CloudWatch Metrics</text>
+        <text class="s" x="690" y="518" text-anchor="middle">EMF · PdfExtract</text>
+
+        <rect class="node" x="780" y="474" width="150" height="62" rx="6"/>
+        <text class="t" x="855" y="500" text-anchor="middle">CloudWatch Alarms</text>
+        <text class="s" x="855" y="518" text-anchor="middle">DLQ · scans · failures</text>
+
+        <rect class="node" x="945" y="474" width="150" height="62" rx="6"/>
+        <text class="t" x="1020" y="500" text-anchor="middle">X-Ray</text>
+        <text class="s" x="1020" y="518" text-anchor="middle">active tracing</text>
+
+        <line class="ln" x1="810" y1="242" x2="810" y2="438" marker-end="url(#ah)"/>
+        <text class="lbl" x="820" y="428">logs · EMF lines · traces</text>
+      </svg>
+    </div>
+    <figcaption>The hot path runs left to right in blue. The dashed line back to the raw bucket is Lambda fetching the file named in the event, since the event carries only the key. Orange is the failure branch, and the dashed box is outside this stack.</figcaption>
+  </figure>
+
+  <section>
+    <h2>Settings the stack must apply</h2>
+    <div class="tbl">
+      <table>
+        <tr><th>S3 → SQS</th><td>Notification for <code>ObjectCreated</code> on prefix <code>raw/</code>, suffix <code>.pdf</code>, plus a queue policy that lets the bucket send messages.</td></tr>
+        <tr><th>Output bucket</th><td>Separate bucket from the input, so writing results can never re-trigger the pipeline.</td></tr>
+        <tr><th>Queue</th><td>Visibility timeout of at least 6× the Lambda timeout. Redrive to the DLQ after 3 receives.</td></tr>
+        <tr><th>Event source mapping</th><td>Batch size 1, so memory use follows one PDF. A <code>MaximumConcurrency</code> cap keeps a bulk upload from flooding downstream systems.</td></tr>
+        <tr><th>Lambda</th><td>arm64, <code>provided.al2023</code>, memory sized from the <code>Max Memory Used</code> line in the REPORT log, X-Ray active tracing on. Environment: <code>OUTPUT_BUCKET</code>, <code>OUTPUT_PREFIX</code>, <code>MAX_PDF_BYTES</code>.</td></tr>
+        <tr><th>IAM</th><td>Read on the raw bucket, write on the output bucket, receive/delete on the queue, log writes, X-Ray write. Nothing broader.</td></tr>
+        <tr><th>Alarms</th><td>Messages in the DLQ, <code>Failures</code>, <code>PagesFailed</code>, and <code>PagesScanned</code> (pages that need OCR).</td></tr>
+      </table>
+    </div>
+  </section>
+</main>
+
+</body></html>

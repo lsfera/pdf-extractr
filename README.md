@@ -12,7 +12,7 @@ S3 raw bucket ──► SQS (+ DLQ) ──► Lambda (Rust, arm64) ──► S3 
 |---|---|
 | [lambda/](lambda/) | The extraction library and the Lambda binary (`bootstrap`). Per-page extraction with panic isolation, Markdown plus table grids, JSON tracing logs and CloudWatch EMF metrics. |
 | [infra/](infra/) | Pulumi (Rust SDK) program: buckets, queues, IAM, Lambda, event source mapping, alarms. Also holds the Makefile that deploys to and tests against LocalStack. |
-| [lambda/docs/](lambda/docs/) | Architecture diagram (`.drawio`) and design notes. |
+| [lambda/docs/](lambda/docs/) | Architecture diagram ([HTML](lambda/docs/pdf-extraction-pipeline.html), [draw.io](lambda/docs/pdf-extraction-pipeline.drawio)) and design notes. |
 
 Dependencies that are not published to crates.io are expected beside this folder:
 
@@ -22,6 +22,39 @@ Dependencies that are not published to crates.io are expected beside this folder
 ├── pdf_oxide/        https://github.com/lsfera/pdf_oxide
 └── pulumi-rust/      https://github.com/pulumi-labs/pulumi-rust  (experimental, unofficial)
 ```
+
+## Architecture
+
+PDFs land in S3, a queue absorbs bursts and retries, and one Rust Lambda per document writes structured JSON and
+Markdown to a separate bucket.
+
+```mermaid
+flowchart LR
+    U[Uploaders] -->|PUT| RAW[(S3 raw bucket<br/>raw/*.pdf)]
+    RAW -->|ObjectCreated| Q[[SQS queue]]
+    Q -->|poll, batch 1| L[Lambda: extract<br/>Rust, arm64, provided.al2023]
+    L -.->|GetObject by key,<br/>whole PDF into memory| RAW
+    L -->|PutObject x2| OUT[(S3 output bucket<br/>.json + .md)]
+    Q -->|after 3 receives| DLQ[[Dead-letter queue]]
+    OUT -.->|ObjectCreated on .json| NEXT[Next stage<br/>EventBridge / SNS / SQS]
+    L -->|logs, EMF lines, traces| OBS[CloudWatch Logs, Metrics, Alarms<br/>X-Ray]
+```
+
+The dashed line back to the raw bucket is the Lambda fetching the file named in the event, since the event carries only
+the key. The next stage is outside this stack. The same diagram is in
+[HTML](lambda/docs/pdf-extraction-pipeline.html) and [draw.io](lambda/docs/pdf-extraction-pipeline.drawio) form.
+
+Settings the stack applies:
+
+| Part | Setting |
+|---|---|
+| S3 → SQS | Notification for `ObjectCreated` on prefix `raw/`, suffix `.pdf`, plus a queue policy that lets the bucket send messages. |
+| Output bucket | Separate from the input, so writing results can never re-trigger the pipeline. |
+| Queue | Visibility timeout of 6× the Lambda timeout. Redrive to the DLQ after 3 receives. |
+| Event source mapping | Batch size 1, so memory use follows one PDF. A `MaximumConcurrency` cap keeps a bulk upload from flooding downstream systems. |
+| Lambda | arm64, `provided.al2023`, X-Ray active tracing. Memory is sized from the `Max Memory Used` line in the REPORT log. |
+| IAM | Read on the raw bucket, write on the output bucket, receive/delete on the queue, log writes, X-Ray write. Nothing broader. |
+| Alarms | Messages in the DLQ, `Failures`, `PagesFailed`, and `PagesScanned` (pages that need OCR). |
 
 ## Quick start
 
