@@ -9,7 +9,7 @@
 //! `pulumi package gen-sdk aws@7.41.0 --language rust --out ./sdks/aws`
 
 use pulumi::pv;
-use pulumi_aws::{cloudwatch, iam, lambda, s3, sqs, types};
+use pulumi_aws::{cloudwatch, iam, lambda, s3, sns, sqs, types};
 
 const FUNCTION_NAME: &str = "pdf-extract";
 /// Lambda timeout. The queue's visibility timeout is derived from it.
@@ -279,13 +279,38 @@ fn main() {
             },
         );
 
-        // Alarms on the DLQ and on the custom metrics the handler emits (EMF).
+        // Alarms notify this topic; `alarmEmail` (optional) subscribes an address, which must confirm by email.
+        // Skipped on an emulator (`endpointUrl` set): without an account id the provider cannot build the topic ARN,
+        // and community LocalStack lacks the S3 Control API needed when it does.
+        let on_emulator = ctx.config().get_string_opt("endpointUrl").is_some();
+        let alarms_topic = (!on_emulator).then(|| {
+            let topic = sns::Topic::new(&ctx, "alarms", sns::TopicArgs::default(), pulumi::ResourceOptions::default());
+            if let Some(email) = ctx.config().get_string_opt("alarmEmail") {
+                sns::TopicSubscription::new(
+                    &ctx,
+                    "alarms-email",
+                    sns::TopicSubscriptionArgs {
+                        topic: Some(topic.arn().cast()),
+                        protocol: Some(s("email").cast()),
+                        endpoint: Some(email.cast()),
+                        ..Default::default()
+                    },
+                    pulumi::ResourceOptions::default(),
+                );
+            }
+            topic
+        });
+
+        // Alarms on the DLQ, on the custom metrics the handler emits (EMF) and on Lambda's own error count.
         let alarm = |id: &str, description: &str, namespace: &str, metric: &str, dim: (&str, Pv)| {
             cloudwatch::MetricAlarm::new(
                 &ctx,
                 id,
                 cloudwatch::MetricAlarmArgs {
                     alarm_description: Some(s(description).cast()),
+                    alarm_actions: alarms_topic
+                        .as_ref()
+                        .map(|t| pulumi::output::all(vec![t.arn().cast()])),
                     namespace: Some(s(namespace).cast()),
                     metric_name: Some(s(metric).cast()),
                     dimensions: Some(obj(vec![dim]).cast()),
@@ -306,6 +331,14 @@ fn main() {
             "AWS/SQS",
             "ApproximateNumberOfMessagesVisible",
             ("QueueName", dlq.name().cast()),
+        );
+        // Timeouts, out-of-memory kills and crashes never reach the handler's own `Failures` metric.
+        alarm(
+            "alarm-lambda-errors",
+            "Lambda invocations errored (timeout, out of memory, crash or retryable failure)",
+            "AWS/Lambda",
+            "Errors",
+            ("FunctionName", s(FUNCTION_NAME)),
         );
         let fn_dim = || ("Function", s(FUNCTION_NAME));
         alarm("alarm-failures", "Extraction invocations failed", "PdfExtract", "Failures", fn_dim());
@@ -328,6 +361,9 @@ fn main() {
         ctx.export("outputBucket", out.bucket().cast::<pulumi::PropertyValue>());
         ctx.export("queueUrl", queue.url().cast::<pulumi::PropertyValue>());
         ctx.export("dlqUrl", dlq.url().cast::<pulumi::PropertyValue>());
+        if let Some(topic) = &alarms_topic {
+            ctx.export("alarmsTopicArn", topic.arn().cast::<pulumi::PropertyValue>());
+        }
         ctx.export("functionName", function.name().cast::<pulumi::PropertyValue>());
 
         Ok(())

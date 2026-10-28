@@ -12,7 +12,7 @@ S3 raw bucket ──► SQS (+ DLQ) ──► Lambda (Rust, arm64) ──► S3 
 |---|---|
 | [lambda/](lambda/) | The extraction library and the Lambda binary (`bootstrap`). Per-page extraction with panic isolation, Markdown plus table grids, JSON tracing logs and CloudWatch EMF metrics. |
 | [infra/](infra/) | Pulumi (Rust SDK) program: buckets, queues, IAM, Lambda, event source mapping, alarms. Also holds the Makefile that deploys to and tests against LocalStack. |
-| [lambda/docs/](lambda/docs/) | Architecture diagram ([HTML](lambda/docs/pdf-extraction-pipeline.html), [draw.io](lambda/docs/pdf-extraction-pipeline.drawio)) and design notes. |
+| [lambda/docs/](lambda/docs/) | Architecture diagram source ([draw.io](lambda/docs/pdf-extraction-pipeline.drawio)). |
 
 Dependencies that are not published to crates.io are expected beside this folder:
 
@@ -41,8 +41,8 @@ flowchart LR
 ```
 
 The dashed line back to the raw bucket is the Lambda fetching the file named in the event, since the event carries only
-the key. The next stage is outside this stack. The same diagram is in
-[HTML](lambda/docs/pdf-extraction-pipeline.html) and [draw.io](lambda/docs/pdf-extraction-pipeline.drawio) form.
+the key. The next stage is outside this stack. An editable draw.io version is in
+[lambda/docs/](lambda/docs/pdf-extraction-pipeline.drawio).
 
 Settings the stack applies:
 
@@ -105,5 +105,4 @@ commits.
 
 Validated against LocalStack only (upload, extraction, S3 filters, queue wiring, metrics line, destroy). Not yet
 exercised: a message reaching the dead-letter queue after three failures, X-Ray tracing (not emulated by community
-LocalStack) and a deployment to real AWS. See [infra/README.md](infra/README.md) for stack configuration and
-[lambda/docs/pdf-extraction-pipeline.md](lambda/docs/pdf-extraction-pipeline.md) for design decisions.
+LocalStack) and a deployment to real AWS. See [infra/README.md](infra/README.md) for stack configuration.

@@ -65,23 +65,57 @@ impl Stats {
     }
 }
 
-/// Each SQS message body is an S3 event notification. A failing message fails the invocation, so SQS
-/// retries it and eventually moves it to the dead-letter queue.
+/// How SQS should treat a failed object.
+enum Failure {
+    /// Retrying cannot help (corrupt or oversize PDF, wrong password): log, count and acknowledge.
+    Permanent(Error),
+    /// S3 hiccup or similar: fail the invocation so SQS redelivers, and eventually dead-letters, the message.
+    Transient(Error),
+}
+
+fn transient(e: impl Into<Error>) -> Failure {
+    Failure::Transient(e.into())
+}
+
+fn permanent(e: impl Into<Error>) -> Failure {
+    Failure::Permanent(e.into())
+}
+
+/// Each SQS message body is an S3 event notification. Malformed messages and unprocessable PDFs are
+/// acknowledged after logging; only transient errors fail the invocation. Every record is attempted
+/// before the first transient error is returned.
 async fn handler(client: &Client, cfg: &Config, ev: LambdaEvent<SqsEvent>) -> Result<(), Error> {
+    let mut retry = None;
     for msg in ev.payload.records {
         let Some(body) = msg.body else { continue };
-        let value: serde_json::Value = serde_json::from_str(&body)?;
-        // S3 sends one `s3:TestEvent` (no `Records`) when the notification is first configured.
-        if value.get("Event").and_then(|e| e.as_str()) == Some("s3:TestEvent") {
-            warn!("skipping s3:TestEvent");
-            continue;
+        let event = match parse_notification(&body) {
+            Ok(Some(event)) => event,
+            Ok(None) => continue,
+            Err(e) => {
+                error!(error = %e, "unparseable message body; dropping it");
+                emit_metrics("<unparseable message>", None);
+                continue;
+            }
+        };
+        if let Err(e) = handle_s3(client, cfg, event).await {
+            retry.get_or_insert(e);
         }
-        handle_s3(client, cfg, serde_json::from_value(value)?).await?;
     }
-    Ok(())
+    retry.map_or(Ok(()), Err)
+}
+
+/// `Ok(None)` for the `s3:TestEvent` S3 sends once, when the notification is first configured.
+fn parse_notification(body: &str) -> Result<Option<S3Event>, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_str(body)?;
+    if value.get("Event").and_then(|e| e.as_str()) == Some("s3:TestEvent") {
+        warn!("skipping s3:TestEvent");
+        return Ok(None);
+    }
+    serde_json::from_value(value).map(Some)
 }
 
 async fn handle_s3(client: &Client, cfg: &Config, event: S3Event) -> Result<(), Error> {
+    let mut retry = None;
     for rec in event.records {
         let (Some(bucket), Some(raw_key)) = (rec.s3.bucket.name, rec.s3.object.key) else {
             continue;
@@ -106,28 +140,40 @@ async fn handle_s3(client: &Client, cfg: &Config, event: S3Event) -> Result<(), 
                 );
                 emit_metrics(&key, Some(&stats));
             }
-            Err(e) => {
-                error!(%bucket, %key, error = %e, "pdf extraction failed");
+            Err(Failure::Permanent(e)) => {
+                error!(%bucket, %key, error = %e, "pdf cannot be processed; not retrying");
                 emit_metrics(&key, None);
-                return Err(e);
+            }
+            Err(Failure::Transient(e)) => {
+                error!(%bucket, %key, error = %e, "pdf extraction failed; will retry");
+                emit_metrics(&key, None);
+                retry.get_or_insert(e);
             }
         }
     }
-    Ok(())
+    retry.map_or(Ok(()), Err)
 }
 
-async fn process(client: &Client, cfg: &Config, bucket: &str, key: &str) -> Result<Stats, Error> {
-    let obj = client.get_object().bucket(bucket).key(key).send().await?;
-    if obj.content_length().unwrap_or(0) > cfg.max_pdf_bytes {
-        return Err(format!("s3://{bucket}/{key} exceeds MAX_PDF_BYTES").into());
+async fn process(client: &Client, cfg: &Config, bucket: &str, key: &str) -> Result<Stats, Failure> {
+    let obj = client
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(transient)?;
+    match obj.content_length() {
+        Some(len) if len <= cfg.max_pdf_bytes => {}
+        Some(_) => return Err(permanent(format!("s3://{bucket}/{key} exceeds MAX_PDF_BYTES"))),
+        None => return Err(permanent(format!("s3://{bucket}/{key} has no content length"))),
     }
-    let bytes = obj.body.collect().await?.into_bytes().to_vec();
+    let bytes = obj.body.collect().await.map_err(transient)?.into_bytes().to_vec();
     let pdf_bytes = bytes.len();
 
     let started = Instant::now();
-    let result = extract(bytes, &cfg.opts)?;
+    let result = extract(bytes, &cfg.opts).map_err(permanent)?;
     let stats = Stats::new(pdf_bytes, &result, elapsed_ms(started));
-    let json = serde_json::to_vec(&result)?;
+    let json = serde_json::to_vec(&result).map_err(permanent)?;
     let md = result.markdown();
     drop(result);
 
@@ -142,7 +188,8 @@ async fn process(client: &Client, cfg: &Config, bucket: &str, key: &str) -> Resu
             .content_type(content_type)
             .body(ByteStream::from(body))
             .send()
-            .await?;
+            .await
+            .map_err(transient)?;
     }
     Ok(stats)
 }
@@ -227,15 +274,21 @@ async fn main() -> Result<(), Error> {
     if let (Ok(bucket), Ok(key)) = (env::var("LOCAL_S3_BUCKET"), env::var("LOCAL_S3_KEY")) {
         let stats = process(&client, &cfg, &bucket, &key).await;
         emit_metrics(&key, stats.as_ref().ok());
-        stats?;
-        return Ok(());
+        return stats.map(drop).map_err(|(Failure::Permanent(e) | Failure::Transient(e))| e);
     }
     lambda_runtime::run(service_fn(|ev| handler(&client, &cfg, ev))).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::decode_key;
+    use super::{decode_key, parse_notification};
+
+    #[test]
+    fn s3_test_event_is_skipped_and_garbage_is_rejected() {
+        assert!(matches!(parse_notification(r#"{"Event":"s3:TestEvent"}"#), Ok(None)));
+        assert!(parse_notification("not json").is_err());
+        assert!(parse_notification(r#"{"unrelated":true}"#).is_err());
+    }
 
     #[test]
     fn decodes_s3_event_keys() {

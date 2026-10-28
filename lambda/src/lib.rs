@@ -175,9 +175,9 @@ fn process_page(doc: &PdfDocument, idx: usize, md: &ConversionOptions, opts: &Op
     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     let page = match outcome {
-        Ok((markdown, tables)) => Page {
+        Ok((markdown, tables, likely_scanned)) => Page {
             page: idx + 1,
-            likely_scanned: markdown.trim().is_empty(),
+            likely_scanned,
             markdown,
             tables,
             ms,
@@ -209,8 +209,10 @@ fn extract_page(
     idx: usize,
     md: &ConversionOptions,
     opts: &Options,
-) -> Result<(String, Vec<Table>), String> {
+) -> Result<(String, Vec<Table>, bool), String> {
     let markdown = doc.to_markdown(idx, md).map_err(|e| e.to_string())?;
+    // No text but an image on the page means a scan that needs OCR; a blank or graphics-only page does not.
+    let likely_scanned = markdown.trim().is_empty() && has_images(doc, idx);
     let tables = if opts.tables_json {
         doc.extract_tables(idx)
             .map_err(|e| e.to_string())?
@@ -220,5 +222,9 @@ fn extract_page(
     } else {
         Vec::new()
     };
-    Ok((markdown, tables))
+    Ok((markdown, tables, likely_scanned))
+}
+
+fn has_images(doc: &PdfDocument, idx: usize) -> bool {
+    doc.page_image_handles(idx).is_ok_and(|handles| !handles.is_empty())
 }

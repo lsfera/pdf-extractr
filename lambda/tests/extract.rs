@@ -27,3 +27,9 @@ fn garbage_is_an_open_error() {
     let err = extract(b"not a pdf".to_vec(), &Options::default()).unwrap_err();
     assert!(matches!(err, ExtractError::Open(_)));
 }
+
+#[test]
+fn text_pages_are_not_counted_as_scanned() {
+    let extraction = extract(FIXTURE.to_vec(), &Options::default()).expect("fixture opens");
+    assert_eq!(extraction.pages_scanned(), 0);
+}

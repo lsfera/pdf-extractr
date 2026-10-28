@@ -2,7 +2,7 @@
 
 Pulumi (Rust SDK, experimental) program for the PDF extraction pipeline:
 S3 raw bucket -> SQS (+ DLQ) -> Lambda (`../lambda`, Rust, arm64) -> S3 output bucket,
-with a log group, least-privilege IAM role and CloudWatch alarms. 16 resources.
+with a log group, least-privilege IAM role, CloudWatch alarms and, on real AWS, an SNS topic they notify. 17 resources on LocalStack, 18 on AWS.
 
 Architecture diagram: `../lambda/docs/pdf-extraction-pipeline.drawio`.
 
@@ -68,6 +68,7 @@ Notes:
 | `codeDir` | `lambda-package` | Directory holding `bootstrap` |
 | `maxConcurrency` | `5` | Event source mapping `MaximumConcurrency` |
 | `forceDestroy` | `false` | Allow deleting non-empty buckets |
+| `alarmEmail` | unset | Email address subscribed to the alarms topic (must confirm the subscription); ignored on LocalStack, where no topic is created |
 | `endpointUrl` | unset | Emulator endpoint for the Lambda's AWS SDK (LocalStack only) |
 
 Memory (1024 MB), timeout (120 s), visibility timeout (6x timeout) and `maxReceiveCount` (3) are constants in
