@@ -99,7 +99,7 @@ jobs:
 
       - name: end-to-end test
         working-directory: pdf-extractor/infra
-        run: tests/localstack.sh
+        run: make e2e
 
       - name: localstack logs
         if: failure()
