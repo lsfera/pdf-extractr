@@ -5,7 +5,8 @@
 //!
 //! Observability: JSON `tracing` logs (set the function's log format to JSON, level via RUST_LOG) and
 //! CloudWatch Embedded Metric Format lines on stdout (namespace `PdfExtract`, dimension `Function`).
-//! Peak memory is in Lambda's own REPORT line ("Max Memory Used").
+//! `PeakRssMb` is the process's high-water RSS (`VmHWM`) after each document. A warm container keeps its
+//! earlier peaks, so read it as "at least this much"; Lambda's REPORT line ("Max Memory Used") is the same figure.
 //!
 //! Local debugging: with LOCAL_S3_BUCKET and LOCAL_S3_KEY set, the binary processes that one object and exits,
 //! without the Lambda runtime API (see .vscode/launch.json).
@@ -50,6 +51,7 @@ struct Stats {
     pages_scanned: usize,
     tables: usize,
     extract_ms: u64,
+    peak_rss_mb: Option<u64>,
 }
 
 impl Stats {
@@ -61,8 +63,22 @@ impl Stats {
             pages_scanned: e.pages_scanned(),
             tables: e.table_count(),
             extract_ms,
+            peak_rss_mb: peak_rss_mb(),
         }
     }
+}
+
+/// High-water resident set size in MiB, from `/proc/self/status` (Linux only).
+fn peak_rss_mb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kb: u64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some(kb / 1024)
 }
 
 /// How SQS should treat a failed object.
@@ -162,12 +178,17 @@ async fn process(client: &Client, cfg: &Config, bucket: &str, key: &str) -> Resu
         .send()
         .await
         .map_err(transient)?;
-    match obj.content_length() {
-        Some(len) if len <= cfg.max_pdf_bytes => {}
+    let content_length = match obj.content_length() {
+        Some(len) if len <= cfg.max_pdf_bytes => len,
         Some(_) => return Err(permanent(format!("s3://{bucket}/{key} exceeds MAX_PDF_BYTES"))),
         None => return Err(permanent(format!("s3://{bucket}/{key} has no content length"))),
+    };
+    // Read straight into a right-sized Vec: `collect()` would hold every chunk and then copy them into one buffer.
+    let mut bytes = Vec::with_capacity(usize::try_from(cfg.max_pdf_bytes.min(content_length)).unwrap_or(0));
+    let mut body = obj.body;
+    while let Some(chunk) = body.try_next().await.map_err(transient)? {
+        bytes.extend_from_slice(&chunk);
     }
-    let bytes = obj.body.collect().await.map_err(transient)?.into_bytes().to_vec();
     let pdf_bytes = bytes.len();
 
     let started = Instant::now();
@@ -212,6 +233,9 @@ fn emit_metrics(key: &str, stats: Option<&Stats>) {
             ("PdfBytes", "Bytes", s.pdf_bytes as u64),
             ("ExtractMs", "Milliseconds", s.extract_ms),
         ]);
+        if let Some(mb) = s.peak_rss_mb {
+            values.push(("PeakRssMb", "Megabytes", mb));
+        }
     }
     let definitions: Vec<_> = values
         .iter()

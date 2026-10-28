@@ -1,5 +1,5 @@
 //! Local harness: `extract file.pdf [out_dir]` writes <name>.json / <name>.md and
-//! prints wall time. Peak RSS: `/usr/bin/time -v target/release/extract file.pdf`.
+//! prints wall time and peak RSS, to size the Lambda's memory against real documents.
 use pdf_extract_lambda::{Options, extract};
 use std::{env, error::Error, fs, path::Path, time::Instant};
 
@@ -19,11 +19,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::write(out.with_extension("md"), result.markdown())?;
 
     eprintln!(
-        "{} pages, {} failed, {} likely scanned, {:?}",
+        "{} pages, {} failed, {} likely scanned, {:?}, peak RSS {}",
         result.page_count,
         result.pages_failed(),
         result.pages_scanned(),
-        started.elapsed()
+        started.elapsed(),
+        peak_rss_mb().map_or("n/a".into(), |mb| format!("{mb} MiB")),
     );
     Ok(())
+}
+
+/// High-water resident set size from `/proc/self/status` (Linux only).
+fn peak_rss_mb() -> Option<u64> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find_map(|l| l.strip_prefix("VmHWM:"))?;
+    Some(line.split_whitespace().next()?.parse::<u64>().ok()? / 1024)
 }

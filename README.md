@@ -95,6 +95,18 @@ LocalStack is reached at `host.docker.internal:4566`; change `AWS_ENDPOINT_URL` 
 | `PDF_PASSWORD` | unset | Password for encrypted PDFs |
 | `S3_FORCE_PATH_STYLE` | off | `1` for LocalStack/MinIO |
 
+## Sizing memory
+
+Peak memory is dominated by `pdf_oxide`'s working set, not by our output: a 4 MB, 29-page sample peaked at about
+120 MiB. Measure your own documents before choosing the Lambda memory size:
+
+```sh
+cargo run --release --bin extract -- statement.pdf out/   # in lambda/; prints pages, time and peak RSS
+```
+
+In AWS the `PeakRssMb` metric (namespace `PdfExtract`) records the process high-water mark after each document. A warm
+container keeps earlier peaks, so treat it as "at least this much".
+
 ## CI
 
 [.github/workflows/localstack.yml](.github/workflows/localstack.yml) runs the same end-to-end test on an arm64
