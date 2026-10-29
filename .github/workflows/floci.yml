@@ -37,7 +37,7 @@ jobs:
       # Same stack as `make test` (Pulumi, the Rust plugin, the generated AWS SDK and Floci all live in
       # compose.test.yml / Dockerfile.test). Only the image layers are cached here, since a fresh runner has none.
       - uses: docker/setup-buildx-action@v4
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/buildx-cache
           key: buildx-${{ runner.os }}-${{ github.sha }}
@@ -52,9 +52,22 @@ jobs:
           # Replace the cache instead of appending to it, or it grows on every run.
           rm -rf "$RUNNER_TEMP/buildx-cache"
           mv "$RUNNER_TEMP/buildx-cache-new" "$RUNNER_TEMP/buildx-cache"
+      # Saved right after the build, not in a post step, so a failing test run still keeps the cache.
+      - uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/buildx-cache
+          key: buildx-${{ runner.os }}-${{ github.sha }}
 
       - name: lambda tests and end-to-end test
         working-directory: pdf-extractor
+        shell: bash
         run: |
           trap 'docker compose -f compose.test.yml down -v --remove-orphans' EXIT
-          docker compose -f compose.test.yml up --abort-on-container-exit --exit-code-from tests
+          docker compose -f compose.test.yml up --abort-on-container-exit --exit-code-from tests 2>&1 \
+            | tee "$RUNNER_TEMP/compose.log"
+      # Job logs need a token to read through the API; annotations do not.
+      - name: surface the failure
+        if: failure()
+        run: |
+          grep -iE 'error|fail|panic|exited with code' "$RUNNER_TEMP/compose.log" | grep -v 'Downloaded\|Compiling' | tail -n 12 \
+            | cut -c1-300 | while IFS= read -r l; do echo "::error::${l}"; done
