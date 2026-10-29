@@ -7,10 +7,15 @@ ARG PULUMI_AWS_VERSION=7.41.0
 
 # Static arm64 `bootstrap` for the Lambda (provided.al2023, arm64).
 FROM clux/muslrust:stable AS lambda
-WORKDIR /volume
-COPY pdf-extractor/lambda ./pdf-extractor/lambda
 WORKDIR /volume/pdf-extractor/lambda
-RUN rustup target add aarch64-unknown-linux-musl && \
+RUN rustup target add aarch64-unknown-linux-musl
+# Dependencies first, against stub sources, so they stay cached until Cargo.toml/Cargo.lock change.
+COPY pdf-extractor/lambda/Cargo.toml pdf-extractor/lambda/Cargo.lock ./
+RUN mkdir -p src/bin && touch src/lib.rs && echo 'fn main() {}' | tee src/bin/extract.rs > src/bin/lambda.rs && \
+    cargo build --release --features lambda --bin lambda --target aarch64-unknown-linux-musl
+COPY pdf-extractor/lambda ./
+# COPY keeps the sources' old mtimes; touch them so cargo rebuilds the crate instead of reusing the stub build.
+RUN find src -name '*.rs' -exec touch {} + && \
     cargo build --release --features lambda --bin lambda --target aarch64-unknown-linux-musl
 
 # Pulumi's Rust language plugin (no released binaries exist; built from the pinned checkout).
@@ -38,18 +43,29 @@ ENV PATH=/opt/pulumi:$PATH
 
 WORKDIR /work
 COPY pulumi-rust ./pulumi-rust
-COPY pdf-extractor ./pdf-extractor
 
-# Generated AWS SDK, repointed at the local pulumi crate (see infra/README.md).
+# Generated AWS SDK, repointed at the local pulumi crate (see infra/README.md). Needs no project sources, so it
+# stays cached until the AWS provider version or pulumi-rust changes.
 WORKDIR /work/pdf-extractor/infra
+COPY pdf-extractor/infra/Pulumi.yaml ./
 RUN PULUMI_CONFIG_PASSPHRASE="" pulumi login --local && \
     pulumi package gen-sdk "aws@${PULUMI_AWS_VERSION}" --language rust --out ./sdks/aws && \
     sed -i 's#^pulumi = .*#pulumi = { path = "../../../../../pulumi-rust/sdk/rust/pulumi" }#' sdks/aws/rust/Cargo.toml
-# Warm the build caches so a test run does not recompile the AWS SDK crate (needs several GB of RAM).
-RUN cargo build
+
+# Compile the dependencies (the AWS SDK crate needs several GB of RAM) against stub sources, so this layer is
+# reused until a Cargo.toml/Cargo.lock changes. The lambda is built with default features, as the tests use it.
+COPY pdf-extractor/infra/Cargo.toml pdf-extractor/infra/Cargo.lock ./
+COPY pdf-extractor/lambda/Cargo.toml pdf-extractor/lambda/Cargo.lock ../lambda/
+RUN mkdir -p src ../lambda/src/bin && echo 'fn main() {}' > src/main.rs && \
+    touch ../lambda/src/lib.rs && echo 'fn main() {}' | tee ../lambda/src/bin/extract.rs > ../lambda/src/bin/lambda.rs && \
+    cargo build && cargo test --manifest-path ../lambda/Cargo.toml --no-run
+
+# The real sources. COPY keeps their old mtimes, so touch them to make cargo rebuild the crates over the stubs.
+COPY pdf-extractor /work/pdf-extractor
+RUN find src ../lambda/src -name '*.rs' -exec touch {} + && \
+    cargo build && cargo test --manifest-path ../lambda/Cargo.toml --no-run
 RUN mkdir -p lambda-package
 COPY --from=lambda /volume/pdf-extractor/lambda/target/aarch64-unknown-linux-musl/release/lambda lambda-package/bootstrap
-RUN cargo test --manifest-path ../lambda/Cargo.toml --no-run
 
 ENV LS_URL=http://pdf-floci:4566 LS_INTERNAL_URL=http://pdf-floci:4566
 CMD cargo test --manifest-path ../lambda/Cargo.toml && make e2e
