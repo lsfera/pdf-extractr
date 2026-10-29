@@ -13,11 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PULUMI_VERSION: 3.272.0
-  PULUMI_AWS_VERSION: 7.41.0
-  FLOCI_IMAGE: floci/floci:latest
-  # This repository is checked out into pdf-extractor/; the unpublished pulumi-rust goes beside it, at the
-  # path infra/Cargo.toml expects (../../pulumi-rust).
+  # The unpublished pulumi-rust goes beside this repository, where the Docker build context (the parent of
+  # pdf-extractor/) and infra/Cargo.toml expect it (../../pulumi-rust).
   PULUMI_RUST_REF: d62e9f213321befce6f870971e191c9f3946b967
 
 jobs:
@@ -37,58 +34,27 @@ jobs:
           path: pulumi-rust
           persist-credentials: false
 
-      - uses: actions/setup-go@v7
+      # Same stack as `make test` (Pulumi, the Rust plugin, the generated AWS SDK and Floci all live in
+      # compose.test.yml / Dockerfile.test). Only the image layers are cached here, since a fresh runner has none.
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/cache@v4
         with:
-          go-version-file: pulumi-rust/pulumi-language-rust/go.mod
-          cache: false
-      - name: build the pulumi rust language plugin
-        working-directory: pulumi-rust/pulumi-language-rust
+          path: ${{ runner.temp }}/buildx-cache
+          key: buildx-${{ runner.os }}-${{ github.sha }}
+          restore-keys: buildx-${{ runner.os }}-
+      - name: build the test image
+        working-directory: pdf-extractor
         run: |
-          go build .
-          echo "$PWD" >> "$GITHUB_PATH"
-      - name: install pulumi
-        uses: pulumi/actions@v7
-        with:
-          pulumi-version: ${{ env.PULUMI_VERSION }}
+          docker buildx bake -f compose.test.yml --load \
+            --set "*.cache-from=type=local,src=$RUNNER_TEMP/buildx-cache" \
+            --set "*.cache-to=type=local,dest=$RUNNER_TEMP/buildx-cache-new,mode=max" \
+            tests
+          # Replace the cache instead of appending to it, or it grows on every run.
+          rm -rf "$RUNNER_TEMP/buildx-cache"
+          mv "$RUNNER_TEMP/buildx-cache-new" "$RUNNER_TEMP/buildx-cache"
 
-      - name: build the lambda package
+      - name: lambda tests and end-to-end test
+        working-directory: pdf-extractor
         run: |
-          docker build -f pdf-extractor/lambda/Dockerfile --target out --output "type=local,dest=$RUNNER_TEMP/lambda-out" .
-          mkdir -p pdf-extractor/infra/lambda-package
-          cp "$RUNNER_TEMP/lambda-out/bootstrap" pdf-extractor/infra/lambda-package/bootstrap
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: pdf-extractor/infra
-      - name: generate the aws sdk
-        working-directory: pdf-extractor/infra
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PULUMI_CONFIG_PASSPHRASE: ""
-        run: |
-          pulumi login --local
-          pulumi package gen-sdk "aws@${PULUMI_AWS_VERSION}" --language rust --out ./sdks/aws
-          sed -i 's#^pulumi = .*#pulumi = { path = "../../../../../pulumi-rust/sdk/rust/pulumi" }#' sdks/aws/rust/Cargo.toml
-
-      - name: start floci
-        run: |
-          docker network create pdf-net
-          docker run -d --name pdf-floci --network pdf-net -p 4566:4566 \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -e FLOCI_HOSTNAME=pdf-floci \
-            -e FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK=pdf-net \
-            "$FLOCI_IMAGE"
-          for _ in $(seq 60); do
-            curl -fs http://localhost:4566/_localstack/health >/dev/null && exit 0
-            sleep 2
-          done
-          echo "floci did not become healthy" >&2
-          exit 1
-
-      - name: end-to-end test
-        working-directory: pdf-extractor/infra
-        run: make e2e
-
-      - name: floci logs
-        if: failure()
-        run: docker logs pdf-floci 2>&1 | tail -n 200
+          trap 'docker compose -f compose.test.yml down -v --remove-orphans' EXIT
+          docker compose -f compose.test.yml up --abort-on-container-exit --exit-code-from tests
