@@ -36,8 +36,8 @@ jobs:
 
       # Same stack as `make test` (Pulumi, the Rust plugin, the generated AWS SDK and Floci all live in
       # compose.test.yml / Dockerfile.test). Only the image layers are cached here, since a fresh runner has none.
-      - uses: docker/setup-buildx-action@v3
-      - uses: actions/cache@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/buildx-cache
           key: buildx-${{ runner.os }}-${{ github.sha }}
