@@ -4,6 +4,9 @@ name: pdf-extractor-test
 services:
   pdf-floci:
     image: floci/floci:latest-compat
+    # The image runs as uid 1001, which cannot open the docker socket on hosts where it is root:docker 0660
+    # (GitHub runners); Floci needs it to start Lambda containers.
+    user: root
     environment:
       FLOCI_HOSTNAME: pdf-floci
       FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK: pdf-test-net
