@@ -47,14 +47,9 @@ jobs:
           go build .
           echo "$PWD" >> "$GITHUB_PATH"
       - name: install pulumi
-        run: |
-          base="https://github.com/pulumi/pulumi/releases/download/v${PULUMI_VERSION}"
-          tarball="pulumi-v${PULUMI_VERSION}-linux-arm64.tar.gz"
-          curl -fsSLO "$base/$tarball"
-          curl -fsSL "$base/pulumi-${PULUMI_VERSION}-checksums.txt" | grep " $tarball\$" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/pulumi"
-          tar -xzf "$tarball" -C "$RUNNER_TEMP/pulumi" --strip-components=1
-          echo "$RUNNER_TEMP/pulumi" >> "$GITHUB_PATH"
+        uses: pulumi/actions@v7
+        with:
+          pulumi-version: ${{ env.PULUMI_VERSION }}
 
       - name: build the lambda package
         run: |
