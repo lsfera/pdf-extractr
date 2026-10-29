@@ -45,7 +45,7 @@ jobs:
       - name: build the test image
         working-directory: pdf-extractor
         run: |
-          docker buildx bake -f compose.test.yml --load \
+          docker buildx bake --allow=fs.read=.. --allow="fs=$RUNNER_TEMP" -f compose.test.yml --load \
             --set "*.cache-from=type=local,src=$RUNNER_TEMP/buildx-cache" \
             --set "*.cache-to=type=local,dest=$RUNNER_TEMP/buildx-cache-new,mode=max" \
             tests
