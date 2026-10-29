@@ -20,7 +20,7 @@ env:
 jobs:
   floci:
     # arm64 so the Lambda (provided.al2023, arm64) runs natively inside Floci instead of under emulation.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
