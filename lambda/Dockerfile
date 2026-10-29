@@ -1,6 +1,7 @@
 # Static arm64 `bootstrap` for provided.al2023. Build with the repository root as the context:
 #   docker build -f pdf-extractor/lambda/Dockerfile --target out --output type=local,dest=./out .
-FROM clux/muslrust:stable AS build
+# Pinned to arm64 so the target below is the native one, whatever the host (QEMU on x86).
+FROM --platform=linux/arm64 clux/muslrust:stable AS build
 WORKDIR /volume
 COPY pdf-extractor/lambda ./pdf-extractor/lambda
 WORKDIR /volume/pdf-extractor/lambda

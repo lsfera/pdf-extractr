@@ -6,7 +6,7 @@ ARG PULUMI_VERSION=3.272.0
 ARG PULUMI_AWS_VERSION=7.41.0
 
 # Static arm64 `bootstrap` for the Lambda (provided.al2023, arm64).
-FROM clux/muslrust:stable AS lambda
+FROM --platform=linux/arm64 clux/muslrust:stable AS lambda
 WORKDIR /volume/pdf-extractor/lambda
 RUN rustup target add aarch64-unknown-linux-musl
 # Dependencies first, against stub sources, so they stay cached until Cargo.toml/Cargo.lock change.

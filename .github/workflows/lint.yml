@@ -1,0 +1,27 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lambda:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: pdf-extractor/lambda
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: pdf-extractor
+          persist-credentials: false
+      - run: rustup component add clippy rustfmt
+      - run: cargo fmt --check
+      # --all-features builds the Lambda binary too. Lint levels come from [lints] in Cargo.toml.
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
