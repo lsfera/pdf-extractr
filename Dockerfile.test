@@ -19,7 +19,7 @@ RUN find src -name '*.rs' -exec touch {} + && \
     cargo build --release --features lambda --bin lambda --target aarch64-unknown-linux-musl
 
 # Pulumi's Rust language plugin (no released binaries exist; built from the pinned checkout).
-FROM golang:1.25-bookworm AS plugin
+FROM golang:1.27-bookworm AS plugin
 COPY pulumi-rust/pulumi-language-rust /src/pulumi-language-rust
 WORKDIR /src/pulumi-language-rust
 RUN go build -o /pulumi-language-rust .
