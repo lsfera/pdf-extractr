@@ -4,7 +4,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug PDF extract lambda (LocalStack)",
+            "name": "Debug PDF extract lambda (Floci)",
             "cargo": {
                 "args": [
                     "build",
@@ -17,7 +17,7 @@
                 ]
             },
             "env": {
-                // `make up` publishes LocalStack on the Docker host; from the devcontainer it is
+                // `make up` publishes Floci on the Docker host; from the devcontainer it is
                 // reached through host.docker.internal (use http://localhost:4566 when VS Code runs on the host).
                 "AWS_ENDPOINT_URL": "http://host.docker.internal:4566",
                 "AWS_ACCESS_KEY_ID": "test",

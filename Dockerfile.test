@@ -1,6 +1,6 @@
-# Test runner for the PDF extraction pipeline: lambda unit/integration tests, then the LocalStack end-to-end test.
+# Test runner for the PDF extraction pipeline: lambda unit/integration tests, then the Floci end-to-end test.
 # Build with the directory that holds pdf-extractor/, pdf_oxide/ and pulumi-rust/ side by side as the context
-# (compose.test.yml does this; LocalStack itself runs as a separate compose service).
+# (compose.test.yml does this; Floci itself runs as a separate compose service).
 
 ARG PULUMI_VERSION=3.272.0
 ARG PULUMI_AWS_VERSION=7.41.0
@@ -53,5 +53,5 @@ RUN mkdir -p lambda-package
 COPY --from=lambda /volume/pdf-extractor/lambda/target/aarch64-unknown-linux-musl/release/lambda lambda-package/bootstrap
 RUN cargo test --manifest-path ../lambda/Cargo.toml --no-run
 
-ENV LS_URL=http://pdf-localstack:4566 LS_INTERNAL_URL=http://pdf-localstack:4566
+ENV LS_URL=http://pdf-floci:4566 LS_INTERNAL_URL=http://pdf-floci:4566
 CMD cargo test --manifest-path ../lambda/Cargo.toml && make e2e

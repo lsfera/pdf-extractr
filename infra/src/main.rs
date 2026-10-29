@@ -2,7 +2,7 @@
 //!
 //! The Lambda is the Rust binary from `../lambda`, packaged as
 //! `bootstrap` in the directory named by the `codeDir` config value (default
-//! `lambda-package`). The same program deploys to LocalStack or AWS; only the
+//! `lambda-package`). The same program deploys to Floci or AWS; only the
 //! stack's `aws:*` config differs.
 //!
 //! Generate the provider SDK first (see README.md):
@@ -354,7 +354,7 @@ fn main() {
             ("OUTPUT_PREFIX", s(OUTPUT_PREFIX)),
             ("MAX_PDF_BYTES", s(MAX_PDF_BYTES)),
         ];
-        // Emulators only (LocalStack): point the function's AWS SDK at them.
+        // Emulators only (Floci): point the function's AWS SDK at them.
         if let Some(endpoint) = ctx.config().get_string_opt("endpointUrl") {
             env.push(("AWS_ENDPOINT_URL", endpoint));
             env.push(("S3_FORCE_PATH_STYLE", s("1")));
@@ -412,7 +412,7 @@ fn main() {
 
         // Alarms notify this topic; `alarmEmail` (optional) subscribes an address, which must confirm by email.
         // Skipped on an emulator (`endpointUrl` set): without an account id the provider cannot build the topic ARN,
-        // and community LocalStack lacks the S3 Control API needed when it does.
+        // and emulators may lack the S3 Control API needed when it does.
         let on_emulator = ctx.config().get_string_opt("endpointUrl").is_some();
         let alarms_topic = (!on_emulator).then(|| {
             let topic = sns::Topic::new(&ctx, "alarms", sns::TopicArgs::default(), pulumi::ResourceOptions::default());

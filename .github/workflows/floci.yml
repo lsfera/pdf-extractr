@@ -1,4 +1,4 @@
-name: localstack
+name: floci
 
 on:
   push:
@@ -9,21 +9,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: localstack-${{ github.ref }}
+  group: floci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   PULUMI_VERSION: 3.272.0
   PULUMI_AWS_VERSION: 7.41.0
-  LOCALSTACK_IMAGE: localstack/localstack:4.14.0
+  FLOCI_IMAGE: floci/floci:latest
   # This repository is checked out into pdf-extractor/; the unpublished dependencies go beside it, at the
   # paths its Cargo.toml files expect (../../pdf_oxide, ../../pulumi-rust from lambda/ and infra/).
   PDF_OXIDE_REF: ad49c4cb3638dc950a29350ef882161372fde473
   PULUMI_RUST_REF: d62e9f213321befce6f870971e191c9f3946b967
 
 jobs:
-  localstack:
-    # arm64 so the Lambda (provided.al2023, arm64) runs natively inside LocalStack instead of under emulation.
+  floci:
+    # arm64 so the Lambda (provided.al2023, arm64) runs natively inside Floci instead of under emulation.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
@@ -82,25 +82,25 @@ jobs:
           pulumi package gen-sdk "aws@${PULUMI_AWS_VERSION}" --language rust --out ./sdks/aws
           sed -i 's#^pulumi = .*#pulumi = { path = "../../../../../pulumi-rust/sdk/rust/pulumi" }#' sdks/aws/rust/Cargo.toml
 
-      - name: start localstack
+      - name: start floci
         run: |
           docker network create pdf-net
-          docker run -d --name pdf-localstack --network pdf-net -p 4566:4566 \
+          docker run -d --name pdf-floci --network pdf-net -p 4566:4566 \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            -e SERVICES=s3,sqs,lambda,iam,logs,cloudwatch,sts,xray \
-            -e LAMBDA_DOCKER_NETWORK=pdf-net \
-            "$LOCALSTACK_IMAGE"
+            -e FLOCI_HOSTNAME=pdf-floci \
+            -e FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK=pdf-net \
+            "$FLOCI_IMAGE"
           for _ in $(seq 60); do
             curl -fs http://localhost:4566/_localstack/health >/dev/null && exit 0
             sleep 2
           done
-          echo "localstack did not become healthy" >&2
+          echo "floci did not become healthy" >&2
           exit 1
 
       - name: end-to-end test
         working-directory: pdf-extractor/infra
         run: make e2e
 
-      - name: localstack logs
+      - name: floci logs
         if: failure()
-        run: docker logs pdf-localstack 2>&1 | tail -n 200
+        run: docker logs pdf-floci 2>&1 | tail -n 200

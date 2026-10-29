@@ -1,6 +1,6 @@
-# Override used by `make up`: publishes LocalStack and adds the long-running `dev` service.
+# Override used by `make up`: publishes Floci and adds the long-running `dev` service.
 services:
-  pdf-localstack:
+  pdf-floci:
     ports:
       - "4566:4566"
   dev:
@@ -10,5 +10,5 @@ services:
     command: make dev
     stop_grace_period: 10s
     depends_on:
-      pdf-localstack:
+      pdf-floci:
         condition: service_healthy

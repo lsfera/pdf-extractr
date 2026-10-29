@@ -1,11 +1,11 @@
-# Deploys the pipeline (Pulumi) to a running LocalStack and exercises it. Runs inside the test image
+# Deploys the pipeline (Pulumi) to a running Floci and exercises it. Runs inside the test image
 # (see ../Dockerfile.test) but works anywhere pulumi, the rust language plugin, aws, jq and curl are on PATH.
 #
 #   deploy   create the stack            destroy  remove it
 #   e2e      deploy, assert, destroy     dev      deploy and wait for uploads until SIGINT/SIGTERM
-#            (no destroy: the compose stack and its LocalStack are discarded on exit)
+#            (no destroy: the compose stack and its Floci are discarded on exit)
 #
-# LocalStack must have the docker socket mounted and LAMBDA_DOCKER_NETWORK set so Lambda containers reach it
+# Floci must have the docker socket mounted and FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK set so Lambda containers reach it
 # at LS_INTERNAL_URL. lambda-package/bootstrap must exist.
 SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
@@ -15,7 +15,7 @@ MAKEFLAGS += --no-print-directory
 .PHONY: deploy destroy assert e2e dev info
 
 LS_URL          ?= http://localhost:4566
-LS_INTERNAL_URL ?= http://pdf-localstack:4566
+LS_INTERNAL_URL ?= http://pdf-floci:4566
 FIXTURE         ?= ../../pdf_oxide/tests/fixtures/1.pdf
 STACK           := ci
 
@@ -104,7 +104,7 @@ info:
 	$(PRELUDE)
 	cat <<MSG
 
-	Pipeline is up. LocalStack is published on the Docker host at port 4566.
+	Pipeline is up. Floci is published on the Docker host at port 4566.
 	  raw bucket    : $$(out rawBucket)   (upload PDFs under raw/)
 	  output bucket : $$(out outputBucket)   (results appear under extracted/raw/<name>.pdf.json and .md)
 

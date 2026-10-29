@@ -2,7 +2,7 @@
 
 Pulumi (Rust SDK, experimental) program for the PDF extraction pipeline:
 S3 raw bucket -> SQS (+ DLQ) -> Lambda (`../lambda`, Rust, arm64) -> S3 output bucket,
-with a log group, least-privilege IAM role, CloudWatch alarms and, on real AWS, an SNS topic they notify. 26 resources on LocalStack, 27 on AWS.
+with a log group, least-privilege IAM role, CloudWatch alarms and, on real AWS, an SNS topic they notify. 26 resources on Floci, 27 on AWS.
 
 Architecture diagram: `../lambda/docs/pdf-extraction-pipeline.drawio`.
 
@@ -27,19 +27,18 @@ docker build --target out --output type=local,dest=./out .
 cp out/bootstrap lambda-package/bootstrap
 ```
 
-## Validate against LocalStack
+## Validate against Floci
 
-`localstack/localstack:latest` (2026.10) refuses to start without `LOCALSTACK_AUTH_TOKEN`.
-`4.14.0` is the community image used here.
+[Floci](https://floci.io) is a free, token-free LocalStack-compatible emulator (MIT). The `-compat` tag is used because it ships `curl` for the healthcheck.
 
 ```sh
-docker run -d --name pdf-localstack --network devcontainer-rust_network \
+docker run -d --name pdf-floci --network devcontainer-rust_network \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e SERVICES=s3,sqs,lambda,iam,logs,cloudwatch,sts,xray \
-  -e LAMBDA_DOCKER_NETWORK=devcontainer-rust_network localstack/localstack:4.14.0
+  -e FLOCI_HOSTNAME=pdf-floci \
+  -e FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK=devcontainer-rust_network floci/floci:latest-compat
 
 export PULUMI_CONFIG_PASSPHRASE="" AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
-       AWS_ENDPOINT_URL=http://pdf-localstack:4566
+       AWS_ENDPOINT_URL=http://pdf-floci:4566
 pulumi login file://$PWD/.pulumi-state && pulumi stack init local
 pulumi config set aws:region us-east-1
 pulumi config set aws:skipCredentialsValidation true
@@ -47,7 +46,7 @@ pulumi config set aws:skipRequestingAccountId true
 pulumi config set aws:skipMetadataApiCheck true
 pulumi config set aws:s3UsePathStyle true
 pulumi config set forceDestroy true
-pulumi config set endpointUrl http://pdf-localstack:4566   # points the Lambda's SDK at LocalStack
+pulumi config set endpointUrl http://pdf-floci:4566   # points the Lambda's SDK at Floci
 pulumi up
 # upload raw/<name>.pdf to the raw bucket (stack output rawBucket); extracted/raw/<name>.pdf.{json,md}
 # appear in outputBucket.
@@ -70,8 +69,8 @@ Notes:
 | `forceDestroy` | `false` | Allow deleting non-empty buckets |
 | `rawRetentionDays` | unset | Expire raw PDFs after this many days (unset keeps them; old versions always expire after 30 days) |
 | `outputRetentionDays` | unset | Expire extraction results after this many days |
-| `alarmEmail` | unset | Email address subscribed to the alarms topic (must confirm the subscription); ignored on LocalStack, where no topic is created |
-| `endpointUrl` | unset | Emulator endpoint for the Lambda's AWS SDK (LocalStack only) |
+| `alarmEmail` | unset | Email address subscribed to the alarms topic (must confirm the subscription); ignored on Floci, where no topic is created |
+| `endpointUrl` | unset | Emulator endpoint for the Lambda's AWS SDK (Floci only) |
 
 Memory (1024 MB), timeout (120 s), visibility timeout (6x timeout) and `maxReceiveCount` (3) are constants in
 `src/main.rs`.
@@ -81,11 +80,11 @@ Memory (1024 MB), timeout (120 s), visibility timeout (6x timeout) and `maxRecei
 From the parent directory (`pdf-extractor/`), with Docker available:
 
 ```sh
-make test   # lambda tests + LocalStack end-to-end test in containers; the compose stack is always torn down
-make up     # LocalStack on :4566 with the pipeline deployed, for manual PDF uploads; Ctrl-C tears it down
+make test   # lambda tests + Floci end-to-end test in containers; the compose stack is always torn down
+make up     # Floci on :4566 with the pipeline deployed, for manual PDF uploads; Ctrl-C tears it down
 make down   # manual teardown if `make up` was killed hard
 ```
 
 The orchestration lives in `infra/Makefile` (`deploy`, `assert`, `e2e`, `dev`, `destroy`); there are no shell scripts.
-To debug the Lambda handler against that LocalStack, use the "Debug PDF extract lambda (LocalStack)" launch
+To debug the Lambda handler against that Floci, use the "Debug PDF extract lambda (Floci)" launch
 configuration in `pdf-extractor/.vscode/launch.json` (it asks for the bucket names `make up` prints and an uploaded object key).

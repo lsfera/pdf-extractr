@@ -1,6 +1,6 @@
 //! SQS (carrying S3 ObjectCreated notifications) -> extract -> write `<OUTPUT_PREFIX><key>.json` and `.md` to OUTPUT_BUCKET.
 //! Env: OUTPUT_BUCKET (required), OUTPUT_PREFIX (default "extracted/"), MAX_PDF_BYTES (default 100 MiB),
-//!      PDF_PASSWORD, TABLES_JSON=0 to skip the table grids, S3_FORCE_PATH_STYLE=1 for LocalStack/MinIO.
+//!      PDF_PASSWORD, TABLES_JSON=0 to skip the table grids, S3_FORCE_PATH_STYLE=1 for Floci/MinIO.
 //! Use a different bucket (or a prefix excluded from the trigger) for output to avoid loops.
 //!
 //! Observability: JSON `tracing` logs (set the function's log format to JSON, level via RUST_LOG) and
