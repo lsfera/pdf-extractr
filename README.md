@@ -51,10 +51,10 @@ Settings the stack applies:
 | Output bucket | Separate from the input, so writing results can never re-trigger the pipeline. |
 | Data protection | Both buckets: SSE-S3 encryption, all public access blocked, TLS-only policy, incomplete multipart uploads aborted after 7 days. The raw bucket is versioned (old versions expire after 30 days). Queues use SQS-managed encryption. Optional `rawRetentionDays` / `outputRetentionDays` expire objects. |
 | Queue | Visibility timeout of 6× the Lambda timeout. Redrive to the DLQ after 3 receives. |
-| Event source mapping | Batch size 1, so memory use follows one PDF. A `MaximumConcurrency` cap keeps a bulk upload from flooding downstream systems. |
+| Event source mapping | Batch size 1, so memory use follows one PDF. `ReportBatchItemFailures` is on: the handler returns only the messages that hit a transient S3 error, so a retry never reprocesses PDFs that succeeded. A `MaximumConcurrency` cap keeps a bulk upload from flooding downstream systems. |
 | Lambda | arm64, `provided.al2023`, X-Ray active tracing. Memory is sized from the `Max Memory Used` line in the REPORT log. |
 | IAM | Read on the raw bucket, write on the output bucket, receive/delete on the queue, log writes, X-Ray write. Nothing broader. |
-| Alarms | Messages in the DLQ, `Failures`, `PagesFailed`, and `PagesScanned` (pages that need OCR). |
+| Alarms | Messages in the DLQ, `Failures`, `PagesFailed` (including pages skipped by the time budget), and `PagesScanned` (pages that need OCR). |
 
 ## Quick start
 
@@ -89,11 +89,22 @@ Floci is reached at `host.docker.internal:4566`; change `AWS_ENDPOINT_URL` in
 | Variable | Default | Meaning |
 |---|---|---|
 | `OUTPUT_BUCKET` | required | Where results are written (must differ from the input bucket) |
-| `OUTPUT_PREFIX` | `extracted/` | Key prefix for results |
-| `MAX_PDF_BYTES` | 100 MiB | Larger objects are rejected |
+| `OUTPUT_PREFIX` | `extracted/` | Key prefix for results; a missing trailing `/` is added. Objects under it in the output bucket are never processed |
+| `MAX_PDF_BYTES` | 100 MiB | Larger objects are rejected, by declared and by actual size. A non-integer value fails at startup |
 | `TABLES_JSON` | on | `0` skips the table grids in the JSON |
 | `PDF_PASSWORD` | unset | Password for encrypted PDFs |
 | `S3_FORCE_PATH_STYLE` | off | `1` for Floci/MinIO |
+
+## Failures and time budget
+
+- **Transient** (S3 read/write errors, throttling, 5xx): the message is reported in `batchItemFailures` and retried,
+  then dead-lettered after 3 receives.
+- **Permanent** (corrupt or oversize PDF, wrong password, deleted object, `4xx` from S3): logged, counted in
+  `Failures` and acknowledged.
+- **Page level**: a page that errors or panics is recorded in its `error`; if only table detection fails, the page
+  keeps its Markdown and sets `tables_error`.
+- **Time budget**: pages not started 15 s before the invocation deadline are recorded as skipped and the partial
+  document is still written, instead of the invocation timing out with no output.
 
 ## Sizing memory
 
