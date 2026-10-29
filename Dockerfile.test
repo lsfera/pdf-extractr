@@ -1,5 +1,5 @@
 # Test runner for the PDF extraction pipeline: lambda unit/integration tests, then the Floci end-to-end test.
-# Build with the directory that holds pdf-extractor/, pdf_oxide/ and pulumi-rust/ side by side as the context
+# Build with the directory that holds pdf-extractor/ and pulumi-rust/ side by side as the context
 # (compose.test.yml does this; Floci itself runs as a separate compose service).
 
 ARG PULUMI_VERSION=3.272.0
@@ -8,7 +8,6 @@ ARG PULUMI_AWS_VERSION=7.41.0
 # Static arm64 `bootstrap` for the Lambda (provided.al2023, arm64).
 FROM clux/muslrust:stable AS lambda
 WORKDIR /volume
-COPY pdf_oxide ./pdf_oxide
 COPY pdf-extractor/lambda ./pdf-extractor/lambda
 WORKDIR /volume/pdf-extractor/lambda
 RUN rustup target add aarch64-unknown-linux-musl && \
@@ -38,7 +37,6 @@ COPY --from=plugin /pulumi-language-rust /opt/pulumi/pulumi-language-rust
 ENV PATH=/opt/pulumi:$PATH
 
 WORKDIR /work
-COPY pdf_oxide ./pdf_oxide
 COPY pulumi-rust ./pulumi-rust
 COPY pdf-extractor ./pdf-extractor
 

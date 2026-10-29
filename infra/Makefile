@@ -16,7 +16,7 @@ MAKEFLAGS += --no-print-directory
 
 LS_URL          ?= http://localhost:4566
 LS_INTERNAL_URL ?= http://pdf-floci:4566
-FIXTURE         ?= ../../pdf_oxide/tests/fixtures/1.pdf
+FIXTURE         ?= ../lambda/tests/fixtures/1.pdf
 STACK           := ci
 
 export AWS_ACCESS_KEY_ID = test

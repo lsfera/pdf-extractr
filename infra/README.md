@@ -20,7 +20,7 @@ Architecture diagram: `../lambda/docs/pdf-extraction-pipeline.drawio`.
 
 ```sh
 # In the devcontainer, bind mounts to the Docker host do not work, so build through a docker build
-# context and export the binary. The Dockerfile copies ../../pdf_oxide and ../lambda and runs
+# context and export the binary. The Dockerfile copies ../lambda and runs
 #   cargo build --release --features lambda --bin lambda --target aarch64-unknown-linux-musl
 # in clux/muslrust:stable, then `COPY --from=build .../lambda /bootstrap` into a scratch stage.
 docker build --target out --output type=local,dest=./out .

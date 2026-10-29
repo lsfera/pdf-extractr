@@ -16,9 +16,8 @@ env:
   PULUMI_VERSION: 3.272.0
   PULUMI_AWS_VERSION: 7.41.0
   FLOCI_IMAGE: floci/floci:latest
-  # This repository is checked out into pdf-extractor/; the unpublished dependencies go beside it, at the
-  # paths its Cargo.toml files expect (../../pdf_oxide, ../../pulumi-rust from lambda/ and infra/).
-  PDF_OXIDE_REF: ad49c4cb3638dc950a29350ef882161372fde473
+  # This repository is checked out into pdf-extractor/; the unpublished pulumi-rust goes beside it, at the
+  # path infra/Cargo.toml expects (../../pulumi-rust).
   PULUMI_RUST_REF: d62e9f213321befce6f870971e191c9f3946b967
 
 jobs:
@@ -30,12 +29,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: pdf-extractor
-          persist-credentials: false
-      - uses: actions/checkout@v7
-        with:
-          repository: lsfera/pdf_oxide
-          ref: ${{ env.PDF_OXIDE_REF }}
-          path: pdf_oxide
           persist-credentials: false
       - uses: actions/checkout@v7
         with:

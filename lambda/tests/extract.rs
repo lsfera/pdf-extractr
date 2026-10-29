@@ -1,6 +1,6 @@
 use pdf_extract_lambda::{ExtractError, Options, extract};
 
-const FIXTURE: &[u8] = include_bytes!("../../../pdf_oxide/tests/fixtures/1.pdf");
+const FIXTURE: &[u8] = include_bytes!("fixtures/1.pdf");
 
 #[test]
 fn extracts_every_page() {

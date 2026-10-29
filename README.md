@@ -19,7 +19,6 @@ Dependencies that are not published to crates.io are expected beside this folder
 ```
 <workspace>/
 ├── pdf-extractor/    this repository
-├── pdf_oxide/        https://github.com/lsfera/pdf_oxide
 └── pulumi-rust/      https://github.com/pulumi-labs/pulumi-rust  (experimental, unofficial)
 ```
 
@@ -111,8 +110,8 @@ container keeps earlier peaks, so treat it as "at least this much".
 ## CI
 
 [.github/workflows/floci.yml](.github/workflows/floci.yml) runs the same end-to-end test on an arm64
-runner. It checks this repository out into `pdf-extractor/` with `pdf_oxide` and `pulumi-rust` beside it, at pinned
-commits.
+runner. It checks this repository out into `pdf-extractor/` with `pulumi-rust` beside it, at a pinned
+commit. `pdf_oxide` comes from crates.io (see [lambda/Cargo.toml](lambda/Cargo.toml)).
 
 ## Status
 

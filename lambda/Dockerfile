@@ -2,7 +2,6 @@
 #   docker build -f pdf-extractor/lambda/Dockerfile --target out --output type=local,dest=./out .
 FROM clux/muslrust:stable AS build
 WORKDIR /volume
-COPY pdf_oxide ./pdf_oxide
 COPY pdf-extractor/lambda ./pdf-extractor/lambda
 WORKDIR /volume/pdf-extractor/lambda
 RUN rustup target add aarch64-unknown-linux-musl && \
