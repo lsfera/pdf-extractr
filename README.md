@@ -12,7 +12,7 @@ S3 raw bucket ──► SQS (+ DLQ) ──► Lambda (Rust, arm64) ──► S3 
 |---|---|
 | [lambda/](lambda/) | The extraction library and the Lambda binary (`bootstrap`). Per-page extraction with panic isolation, Markdown plus table grids, JSON tracing logs and CloudWatch EMF metrics. |
 | [infra/](infra/) | Pulumi (Rust SDK) program: buckets, queues, IAM, Lambda, event source mapping, alarms. Also holds the Makefile that deploys to and tests against Floci. |
-| [lambda/docs/](lambda/docs/) | Architecture diagram source ([draw.io](lambda/docs/pdf-extraction-pipeline.drawio)). |
+| [lambda/docs/](lambda/docs/) | Architecture diagram source ([draw.io](lambda/docs/pdf-extraction-pipeline.drawio.svg)). |
 
 Dependencies that are not published to crates.io are expected beside this folder:
 
@@ -39,9 +39,11 @@ flowchart LR
     L -->|logs, EMF lines, traces| OBS[CloudWatch Logs, Metrics, Alarms<br/>X-Ray]
 ```
 
+![PDF extraction pipeline](lambda/docs/pdf-extraction-pipeline.drawio.svg)
+
 The dashed line back to the raw bucket is the Lambda fetching the file named in the event, since the event carries only
 the key. The next stage is outside this stack. An editable draw.io version is in
-[lambda/docs/](lambda/docs/pdf-extraction-pipeline.drawio).
+[lambda/docs/](lambda/docs/pdf-extraction-pipeline.drawio.svg).
 
 Settings the stack applies:
 

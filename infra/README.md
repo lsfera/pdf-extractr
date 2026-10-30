@@ -4,7 +4,7 @@ Pulumi (Rust SDK, experimental) program for the PDF extraction pipeline:
 S3 raw bucket -> SQS (+ DLQ) -> Lambda (`../lambda`, Rust, arm64) -> S3 output bucket,
 with a log group, least-privilege IAM role, CloudWatch alarms and, on real AWS, an SNS topic they notify. 26 resources on Floci, 27 on AWS.
 
-Architecture diagram: `../lambda/docs/pdf-extraction-pipeline.drawio`.
+Architecture diagram: `../lambda/docs/pdf-extraction-pipeline.drawio.svg`.
 
 ## Prerequisites
 
