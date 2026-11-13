@@ -2,8 +2,8 @@
 # Build with the directory that holds pdf-extractor/ and pulumi-rust/ side by side as the context
 # (compose.test.yml does this; Floci itself runs as a separate compose service).
 
-ARG PULUMI_VERSION=3.272.0
-ARG PULUMI_AWS_VERSION=7.41.0
+ARG PULUMI_VERSION=3.276.0
+ARG PULUMI_AWS_VERSION=7.54.0
 
 # Static arm64 `bootstrap` for the Lambda (provided.al2023, arm64).
 FROM --platform=linux/arm64 clux/muslrust:stable AS lambda
